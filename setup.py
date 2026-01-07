@@ -1,17 +1,17 @@
 from setuptools import setup, Extension
-import numpy as np
 
 version_file = 'xtcocotools/version.py'
 
 def get_version():
+    version_dict = {}
     with open(version_file, 'r') as f:
-        exec(compile(f.read(), version_file, 'exec'))
+        exec(compile(f.read(), version_file, 'exec'), version_dict)
     import sys
     # return short version for sdist
     if 'sdist' in sys.argv or 'bdist_wheel' in sys.argv:
-        return locals()['short_version']
+        return version_dict.get('short_version', version_dict.get('__version__', '0.0.0'))
     else:
-        return locals()['__version__']
+        return version_dict.get('__version__', version_dict.get('short_version', '0.0.0'))
 
 def parse_requirements(fname='requirements.txt', with_version=True):
     """Parse the package dependencies listed in a requirements file but strips
@@ -94,14 +94,23 @@ def parse_requirements(fname='requirements.txt', with_version=True):
 # To install library to Python site-packages run "python setup.py build_ext install"
 # Note that the original compile flags below are GCC flags unsupported by the Visual C++ 2015 build tools.
 # They can safely be removed.
-ext_modules = [
-    Extension(
-        'xtcocotools._mask',
-        sources=['./common/maskApi.c', 'xtcocotools/_mask.pyx'],
-        include_dirs = [np.get_include(), './common'],
-        extra_compile_args=[] # originally was ['-Wno-cpp', '-Wno-unused-function', '-std=c99'],
-    )
-]
+
+def get_ext_modules():
+    try:
+        import numpy as np
+        return [
+            Extension(
+                'xtcocotools._mask',
+                sources=['./common/maskApi.c', 'xtcocotools/_mask.pyx'],
+                include_dirs = [np.get_include(), './common'],
+                extra_compile_args=[] # originally was ['-Wno-cpp', '-Wno-unused-function', '-std=c99'],
+            )
+        ]
+    except ImportError:
+        # Return empty list if numpy is not available (will be handled by setup_requires)
+        return []
+
+ext_modules = get_ext_modules()
 
 setup(
     name='xtcocotools',
