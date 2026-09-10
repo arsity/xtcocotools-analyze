@@ -41,14 +41,26 @@ The default area ranges are `all=[0, 1e10]`, `medium=[32², 96²]`, and `large=[
 
 ## Evaluation and diagnostic outputs
 
-- `evaluate(verbose=False, makeplots=False, savedir=None, team_name=None)` evaluates the original predictions with native xtcocotools matching and accumulation. `stats` contains ten values: AP, AP50, AP75, AP-medium, AP-large, AR, AR50, AR75, AR-medium, AR-large. They use the selected detection limit and thresholds. If there is no range named `all`, the first range is the overall range. Unsupported or absent slices are `-1`.
+- `evaluate(verbose=False, makeplots=False, savedir=None, team_name=None)` evaluates the original predictions with native xtcocotools matching and accumulation. For `keypoints`, `stats` contains ten values: AP, AP50, AP75, AP-medium, AP-large, AR, AR50, AR75, AR-medium, AR-large. For `keypoints_crowd`, it contains the native nine values: AP, AP50, AP75, AR, AR50, AR75, AP-easy, AP-medium, AP-hard. The last three refer to crowd groups, not object sizes. Summaries use the selected detection limit and thresholds. If there is no range named `all`, the first range is the overall range. Unsupported or absent slices are `-1`.
 - `analyze(check_kpts=True, check_scores=True, check_bckgd=True)` computes diagnostics. `corrected_dts[area]` holds original predictions plus error masks, `opt_keypoints`, `max_oks`, and `opt_score` when the corresponding stages are enabled. Predictions filtered by the native all-zero visibility rule are omitted.
 - `summarize(makeplots=False, savedir=None, team_name=None)` sets `stats` to records with `err`, `oks`, `areaRngLbl`, `maxDets`, `auc`, and `recall`. Here `auc` is mean interpolated precision over the evaluator's recall grid at that OKS threshold. Values remain on a 0–1 scale; undefined slices are `-1`.
 - `false_pos_dts[(area, str(oks))]` and `false_neg_gts[(area, str(oks))]` contain unmatched, non-ignored IDs at the selected detection limit, after whichever correction stages were enabled. If keypoint and score corrections were enabled, these are residual errors after those corrections. They are not counts from the original predictions. Disable both stages to inspect original FP/FN matches.
 
-CrowdPose analysis uses native CrowdPose ignore and matching rules. `evaluate()` provides the ten area-based metrics above; it does not invoke the native file-based easy/medium/hard `crowdIndex` report or change the selected image subset.
+Both `evaluate()` and `summarize()` populate `baseline_summary`, a mapping from metric names to values for the original predictions. The CLI includes this mapping in `analysis.json`, alongside the error-diagnostic `stats` records.
 
-Change parameters before `analyze()`. Changing parameters afterward, including a subset, sigmas, area policy, or error order, makes `summarize()` reject the stale diagnostics until `analyze()` is run again. A failed analysis invalidates the previous result. Calling `evaluate()` with changed parameters also invalidates it, even if the parameters are later restored. Calling `evaluate()` between analysis and summarization is supported when parameters are unchanged.
+CrowdPose analysis uses native CrowdPose ignore, matching, and `crowdIndex` grouping rules:
+
+| Group | Image `crowdIndex` |
+|---|---|
+| easy | `< 0.2` |
+| medium | `>= 0.2` and `< 0.8` |
+| hard | `>= 0.8` |
+
+Each selected GT image needs a finite numeric `crowdIndex` for the nine-metric summary; missing metadata raises an error. The wrapper reads the metadata from the in-memory COCO object and evaluates each group with a private native evaluator. Groups include only `params.imgIds`; summary calculation preserves the caller's image selection and the full baseline evaluation records. Empty groups return `-1`.
+
+The group AP reduction follows native `get_type_result()` exactly: mean precision over the first configured area range, including undefined (`-1`) cells, rounded to four decimal places. With the default parameters and full image set, all nine values match native `COCOeval.summarize()`. Custom detection limits and thresholds remain supported. This avoids the native report's file-path dependency and evaluator-state changes while retaining its metric definitions.
+
+Change parameters before `analyze()`. Each run synchronizes `params.iouType` with the native evaluator before preparing annotations, so switching between `keypoints` and `keypoints_crowd` also switches the native ignore rules. Changing parameters afterward, including a subset, sigmas, area policy, or error order, makes `summarize()` reject the stale diagnostics until `analyze()` is run again. A failed analysis invalidates the previous result. Calling `evaluate()` with changed parameters also invalidates it, even if the parameters are later restored. Calling `evaluate()` between analysis and summarization is supported when parameters are unchanged.
 
 ## Interpretation and preserved correction behavior
 

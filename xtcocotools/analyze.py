@@ -104,6 +104,7 @@ def main(argv=None):
             "gt_annotations": len(a._gts),
             "eligible_predictions": len(a._dts),
         },
+        "baseline_summary": a.baseline_summary,
         "stats": a.stats,
         "keypoint_counts": counts,
         "background_errors": [

@@ -32,7 +32,11 @@ def fixture(area=True, zero_id=False):
             a["area"] = 21200.0
         anns.append(a)
     gt.dataset = {
-        "images": [{"id": 1}, {"id": 2}, {"id": 3}],
+        "images": [
+            {"id": 1, "crowdIndex": 0.1},
+            {"id": 2, "crowdIndex": 0.2},
+            {"id": 3, "crowdIndex": 0.8},
+        ],
         "categories": [{"id": 1, "name": "person"}],
         "annotations": anns,
     }
@@ -497,3 +501,183 @@ def test_temporary_parameter_change_via_evaluate_invalidates_analysis():
     a.params.imgIds = original
     with pytest.raises(RuntimeError, match="analyze"):
         a.summarize()
+
+
+@pytest.mark.parametrize("iou_type", ["keypoints", "keypoints_crowd"])
+@pytest.mark.parametrize("entrypoint", ["evaluate", "analyze"])
+@pytest.mark.parametrize("warmup", [False, True])
+def test_changed_iou_type_uses_native_ignore_rules(iou_type, entrypoint, warmup):
+    gt, dt = fixture(area=False)
+    # CrowdPose ignores a person with no visible joints even when v=1 joints
+    # remain labeled; ordinary keypoints evaluation counts these labels.
+    gt.anns[3]["keypoints"][2::3] = [1] * 17
+    gt.anns[3]["num_keypoints"] = 0
+    initial = "keypoints" if iou_type == "keypoints_crowd" else "keypoints_crowd"
+    a = analyzer(gt, dt, iouType=initial, use_area=False)
+    if warmup:
+        a.analyze(check_kpts=False, check_scores=False)
+    a.params.iouType = iou_type
+    expected = analyzer(gt, dt, iouType=iou_type, use_area=False)
+    if entrypoint == "evaluate":
+        a.evaluate()
+        ev = native(gt, dt, False, iouType=iou_type)
+        np.testing.assert_array_equal(a.cocoEval.eval["precision"], ev.eval["precision"])
+        np.testing.assert_array_equal(a.cocoEval.eval["recall"], ev.eval["recall"])
+        expected.evaluate()
+        np.testing.assert_array_equal(a.stats, expected.stats)
+    else:
+        for instance in (a, expected):
+            instance.analyze(check_kpts=False, check_scores=False)
+            instance.summarize()
+        assert a.stats == expected.stats
+        assert a.false_neg_gts == expected.false_neg_gts
+        assert (3 in a.false_neg_gts["all", "0.5"]) == (iou_type == "keypoints")
+    assert a.cocoEval.params.iouType == iou_type
+
+
+def crowd_fixture(area):
+    gt, dt = fixture(area=area)
+    for im, index in zip(gt.dataset["images"], [0.1999, 0.2, 0.7999]):
+        im["crowdIndex"] = index
+    gt.dataset["images"].append({"id": 4, "crowdIndex": 0.8})
+    person = copy.deepcopy(gt.anns[3])
+    person.update(id=4, image_id=4)
+    gt.dataset["annotations"].append(person)
+    detection = copy.deepcopy(dt.anns[1])
+    detection.update(id=5, image_id=4, keypoints=person["keypoints"].copy(), score=0.99)
+    dt.dataset["annotations"].append(detection)
+    gt.createIndex()
+    dt.createIndex()
+    return gt, dt
+
+
+def native_crowd_summary(gt, dt, tmp_path, use_area, **params):
+    import json
+
+    gt_path, dt_path = tmp_path / "crowd_gt.json", tmp_path / "crowd_dt.json"
+    gt_path.write_text(json.dumps(gt.dataset))
+    dt_path.write_text(json.dumps(dt.dataset["annotations"]))
+    reference_gt = COCO(str(gt_path))
+    reference_dt = reference_gt.loadRes(str(dt_path))
+    ev = COCOeval(reference_gt, reference_dt, "keypoints_crowd", SIGMAS, use_area)
+    for key, val in params.items():
+        setattr(ev.params, key, val)
+    ev.evaluate()
+    ev.accumulate()
+    ev.summarize()
+    return ev.stats
+
+
+@pytest.mark.parametrize("area_policy", ["provided", "missing", "ignored"])
+@pytest.mark.parametrize("medium_first", [False, True])
+def test_crowd_summary_matches_all_nine_native_metrics(tmp_path, area_policy, medium_first):
+    gt, dt = crowd_fixture(area=area_policy != "missing")
+    use_area = area_policy == "provided"
+    if area_policy == "ignored":
+        for ann in gt.anns.values():
+            ann["area"] = 1.0  # Must not replace the bbox * 0.53 policy.
+    before = copy.deepcopy((gt.dataset, dt.dataset))
+    a = analyzer(gt, dt, iouType="keypoints_crowd", use_area=use_area)
+    if medium_first:
+        a.params.areaRng = [a.params.areaRng[i] for i in [1, 2, 0]]
+        a.params.areaRngLbl = [a.params.areaRngLbl[i] for i in [1, 2, 0]]
+    expected = native_crowd_summary(
+        gt,
+        dt,
+        tmp_path,
+        use_area,
+        areaRng=a.params.areaRng,
+        areaRngLbl=a.params.areaRngLbl,
+    )
+    a.evaluate()
+    assert list(a.baseline_summary) == [
+        "AP",
+        "AP50",
+        "AP75",
+        "AR",
+        "AR50",
+        "AR75",
+        "AP_easy",
+        "AP_medium",
+        "AP_hard",
+    ]
+    np.testing.assert_array_equal(a.stats, expected)
+    np.testing.assert_array_equal(a.cocoEval.stats, expected)
+    ev = native(
+        gt,
+        dt,
+        use_area,
+        iouType="keypoints_crowd",
+        areaRng=a.params.areaRng,
+        areaRngLbl=a.params.areaRngLbl,
+    )
+    np.testing.assert_array_equal(a.cocoEval.eval["precision"], ev.eval["precision"])
+    assert list(a.cocoEval.params.imgIds) == [1, 2, 3, 4]
+    assert list(a.cocoEval._paramsEval.imgIds) == [1, 2, 3, 4]
+    # The ordinary diagnostic pipeline must retain the same original baseline.
+    summary(a)
+    np.testing.assert_array_equal(list(a.baseline_summary.values()), expected)
+    a.evaluate()
+    np.testing.assert_array_equal(a.stats, expected)
+    assert (gt.dataset, dt.dataset) == before
+    if medium_first:
+        np.testing.assert_array_equal(a.stats[6:], [-1.0, -1.0, -1.0])
+    else:
+        assert a.baseline_summary["AP_medium"] == 0.0
+        assert a.baseline_summary["AP_hard"] == 1.0
+
+
+def test_crowd_summary_uses_only_selected_images_and_handles_empty_groups():
+    gt, dt = crowd_fixture(area=False)
+    del gt.imgs[1]["crowdIndex"]  # Unselected metadata is irrelevant.
+    a = analyzer(gt, dt, iouType="keypoints_crowd", use_area=False)
+    a.params.imgIds = [4, 3]
+    a.evaluate()
+    assert a.baseline_summary["AP_easy"] == -1.0  # No selected easy images.
+    assert a.baseline_summary["AP_medium"] == -1.0  # Selected image has no GT.
+    assert a.baseline_summary["AP_hard"] == 1.0
+    ev = native(gt, dt, False, iouType="keypoints_crowd", imgIds=[3, 4])
+    np.testing.assert_array_equal(a.cocoEval.eval["precision"], ev.eval["precision"])
+    assert a.params.imgIds == [4, 3]
+    assert list(a.cocoEval.params.imgIds) == [3, 4]
+
+
+@pytest.mark.parametrize("index", [None, "0.2", float("nan"), float("inf")])
+def test_crowd_summary_requires_real_crowd_index(index):
+    gt, dt = fixture(area=False)
+    gt.imgs[1].pop("crowdIndex")
+    if index is not None:
+        gt.imgs[1]["crowdIndex"] = index
+    a = analyzer(gt, dt, iouType="keypoints_crowd", use_area=False)
+    with pytest.raises(ValueError, match="crowdIndex for image 1"):
+        a.evaluate()
+    # The metadata requirement belongs to the grouped summary, not matching.
+    a.analyze(check_kpts=False, check_scores=False)
+    with pytest.raises(ValueError, match="crowdIndex for image 1"):
+        a.summarize()
+
+
+def test_crowd_cli_includes_native_baseline_groups(tmp_path):
+    import json
+
+    from xtcocotools.analyze import main
+
+    gt, dt = crowd_fixture(area=False)
+    expected = native_crowd_summary(gt, dt, tmp_path, use_area=False)
+    out = tmp_path / "output"
+    main(
+        [
+            str(tmp_path / "crowd_gt.json"),
+            str(tmp_path / "crowd_dt.json"),
+            str(out),
+            "--no-use-area",
+            "--iou-type",
+            "keypoints_crowd",
+            "--sigmas",
+            *map(str, SIGMAS),
+        ]
+    )
+    report = json.loads((out / "analysis.json").read_text())
+    assert report["protocol"]["iou_type"] == "keypoints_crowd"
+    np.testing.assert_array_equal(list(report["baseline_summary"].values()), expected)
+    assert report["stats"]

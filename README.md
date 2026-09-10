@@ -13,7 +13,7 @@ uv venv --python 3.13
 uv pip install --python .venv/bin/python -e . pytest
 ```
 
-This checkout supplies the `xtcocotools` package, version `1.14.3+analyze.1`. Installing the upstream PyPI release alone does not provide the analysis module.
+This checkout supplies the `xtcocotools` package, version `1.14.3+analyze.2`. Installing the upstream PyPI release alone does not provide the analysis module.
 
 ## Python API
 
@@ -27,6 +27,7 @@ analysis = COCOanalyze(coco_gt, coco_dt, use_area=False)
 analysis.params.maxDets = [20]
 analysis.analyze()
 analysis.summarize()
+print(analysis.baseline_summary)
 print(analysis.stats)
 ```
 
@@ -40,7 +41,9 @@ print(analysis.stats)
   --no-use-area --plots
 ```
 
-The runner writes `analysis.json` with parameters, summary statistics, error counts, and FP/FN IDs; `corrected_detections.json` contains per-detection diagnostics. `--plots` adds PR plots as PDFs. Use `--image-ids` to select a condition subset and `--no-score-errors` to omit score correction.
+The runner writes `analysis.json` with parameters, a `baseline_summary` for original predictions, diagnostic statistics, error counts, and FP/FN IDs; `corrected_detections.json` contains per-detection diagnostics. `--plots` adds PR plots as PDFs. Use `--image-ids` to select a condition subset and `--no-score-errors` to omit score correction.
+
+For `keypoints_crowd`, the baseline summary contains the native nine metrics, including AP for the easy, medium, and hard `crowdIndex` groups. Selected GT images must provide `crowdIndex`; grouping respects `--image-ids`.
 
 A demo using the public COCO examples included in the repository:
 

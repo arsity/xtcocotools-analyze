@@ -17,6 +17,7 @@ import numpy as np
 from matplotlib.colors import to_rgba
 
 from ._analyze_eval import AnalyzeEval
+from .cocoeval import COCOeval
 
 
 class COCOanalyze:
@@ -70,6 +71,7 @@ class COCOanalyze:
             raise ValueError("GT area is missing; pass use_area=False to use bbox area * 0.53")
         # result summarization
         self.stats = []
+        self.baseline_summary = {}
         self._analysis_signature = None
 
     def _configure_skeleton(self, names, inverse_indices):
@@ -129,6 +131,7 @@ class COCOanalyze:
             raise ValueError("sigmas must contain one positive finite value per keypoint")
         p.sigmas = sigmas.copy()
         self.cocoEval.sigmas = sigmas.copy()
+        self.cocoEval.params.iouType = p.iouType
         self.cocoEval.params.imgIds = sorted(set(p.imgIds))
         self.cocoEval.params.catIds = list(p.catIds)
         self.cocoEval._prepare()
@@ -176,11 +179,8 @@ class COCOanalyze:
             )
 
     def _evaluation_stats(self, verbose):
-        """Ten AP/AR entries using the actual thresholds and detection limit.
-
-        CrowdPose uses this same area summary. Its file-based crowdIndex
-        stratification is not invoked by the analysis wrapper.
-        """
+        """Native metric ordering using the selected thresholds and detection limit."""
+        self.baseline_summary = {}
         p = self.cocoEval.params
         overall = "all" if "all" in p.areaRngLbl else p.areaRngLbl[0]
 
@@ -196,38 +196,55 @@ class COCOanalyze:
             valid = values[values >= 0]
             return float(valid.mean()) if valid.size else -1.0
 
-        stats = np.array(
-            [
-                mean(True),
-                mean(True, 0.5),
-                mean(True, 0.75),
-                mean(True, area="medium"),
-                mean(True, area="large"),
-                mean(False),
-                mean(False, 0.5),
-                mean(False, 0.75),
-                mean(False, area="medium"),
-                mean(False, area="large"),
-            ]
-        )
+        metrics = {"AP": mean(True), "AP50": mean(True, 0.5), "AP75": mean(True, 0.75)}
+        if p.iouType == "keypoints":
+            metrics.update(AP_medium=mean(True, area="medium"), AP_large=mean(True, area="large"))
+        metrics.update(AR=mean(False), AR50=mean(False, 0.5), AR75=mean(False, 0.75))
+        if p.iouType == "keypoints_crowd":
+            metrics.update(self._crowd_stats())
+        else:
+            metrics.update(AR_medium=mean(False, area="medium"), AR_large=mean(False, area="large"))
+        self.baseline_summary = metrics
         if verbose:
-            for label, value in zip(
-                [
-                    "AP",
-                    "AP50",
-                    "AP75",
-                    "AP_medium",
-                    "AP_large",
-                    "AR",
-                    "AR50",
-                    "AR75",
-                    "AR_medium",
-                    "AR_large",
-                ],
-                stats,
-            ):
+            for label, value in metrics.items():
                 print(f"{label}: {value:.3f} (maxDets={p.maxDets[0]})")
-        return stats
+        return np.array(list(metrics.values()))
+
+    def _crowd_stats(self):
+        """CrowdPose groups with native reduction, without file or evaluator side effects."""
+        groups = {"AP_easy": [], "AP_medium": [], "AP_hard": []}
+        for image_id in self.cocoEval.params.imgIds:
+            index = self.cocoGt.imgs[image_id].get("crowdIndex")
+            if not isinstance(index, (int, float, np.number)) or not np.isfinite(index):
+                raise ValueError(
+                    f"CrowdPose summary requires a finite numeric crowdIndex for image {image_id}"
+                )
+            label = "AP_easy" if index < 0.2 else "AP_medium" if index < 0.8 else "AP_hard"
+            groups[label].append(image_id)
+
+        # Native get_type_result() re-evaluates each group, reads a GT file, and
+        # leaves its evaluator on the hard subset. Use private COCO objects here.
+        evaluator = COCOeval(
+            copy.deepcopy(self.cocoGt),
+            copy.deepcopy(self.cocoDt),
+            iouType="keypoints_crowd",
+            sigmas=self.cocoEval.sigmas.copy(),
+            use_area=self.cocoEval.use_area,
+        )
+        results = {}
+        for label, image_ids in groups.items():
+            if not image_ids:
+                results[label] = -1.0
+                continue
+            evaluator.params = copy.deepcopy(self.cocoEval.params)
+            evaluator.params.imgIds = image_ids
+            evaluator.evaluate()
+            evaluator.accumulate()
+            # Match native get_type_result(): first area, unfiltered precision,
+            # four decimal places. In particular, do not drop undefined (-1) cells.
+            score = evaluator.eval["precision"][:, :, :, 0, :]
+            results[label] = float(round(np.mean(score), 4))
+        return results
 
     def _signature(self):
         return json.dumps(
@@ -855,6 +872,7 @@ class COCOanalyze:
         # compute all the precision recall curves and return precise breakdown of
         # all error type in terms of keypoint, scoring, false positives and negatives
         ps_mat, rs_mat = self._summarize_baseline()
+        self._evaluation_stats(verbose=False)
         err_types = ["baseline"]
         stats = self._summarize(err_types, ps_mat, rs_mat, oksThrs, areaRngLbl, maxDets)
         self.stats.extend(stats)
