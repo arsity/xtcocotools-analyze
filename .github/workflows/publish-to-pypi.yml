@@ -9,7 +9,7 @@ concurrency:
 jobs:
   build-n-publish-source:
     runs-on: ubuntu-latest
-    if: startsWith(github.event.ref, 'refs/tags')
+    if: github.repository == 'jin-s13/xtcocoapi' && startsWith(github.event.ref, 'refs/tags')
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python 3.7
@@ -30,7 +30,7 @@ jobs:
 
   build-n-publish-linux:
     runs-on: ubuntu-latest
-    if: startsWith(github.event.ref, 'refs/tags')
+    if: github.repository == 'jin-s13/xtcocoapi' && startsWith(github.event.ref, 'refs/tags')
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9", "3.10", "3.11"]
@@ -54,7 +54,7 @@ jobs:
 
   build-n-publish-mac:
     runs-on: macos-latest
-    if: startsWith(github.event.ref, 'refs/tags')
+    if: github.repository == 'jin-s13/xtcocoapi' && startsWith(github.event.ref, 'refs/tags')
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9", "3.10", "3.11"]
@@ -78,7 +78,7 @@ jobs:
 
   build-n-publish-windows:
     runs-on: windows-latest
-    if: startsWith(github.event.ref, 'refs/tags')
+    if: github.repository == 'jin-s13/xtcocoapi' && startsWith(github.event.ref, 'refs/tags')
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9", "3.10", "3.11"]

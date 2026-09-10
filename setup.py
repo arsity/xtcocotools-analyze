@@ -114,12 +114,13 @@ ext_modules = get_ext_modules()
 
 setup(
     name='xtcocotools',
+    python_requires='>=3.10',
     packages=['xtcocotools'],
     package_dir = {'xtcocotools': 'xtcocotools'},
     install_requires=parse_requirements('requirements.txt'),
     setup_requires=parse_requirements('requirements.txt'),
     version=get_version(),
-    description="Extended COCO API",
-    url="https://github.com/jin-s13/xtcocoapi",
+    description="Extended COCO API with keypoint error diagnostics",
+    url="https://github.com/arsity/xtcocotools-analyze",
     ext_modules= ext_modules
 )

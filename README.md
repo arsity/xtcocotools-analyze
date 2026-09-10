@@ -1,57 +1,63 @@
-# Extended COCO API (xtcocotools)
+# xtcocotools-analyze
 
-## News
+Keypoint error diagnostics from [matteorr/coco-analyze](https://github.com/matteorr/coco-analyze), running on the native [xtcocotools](https://github.com/jin-s13/xtcocoapi) evaluator.
 
-[2023.10.19] Release xtcocotools v1.14.3. Support python3.7~3.11 on Linux, mac and windows systems.
+The package adds `xtcocotools.cocoanalyze.COCOanalyze` and a command-line runner. It reports jitter, left/right inversions, swaps between people, missed keypoints, score diagnostics, and unmatched detections and ground truths. The original `COCO` and `COCOeval` implementations remain unchanged.
 
-[2023.09.01] Release xtcocotools v1.14. Solve Cython3.x compatability.
+## Install this fork
 
-[2022.12.27] Release xtcocotools v1.13. Fix int overflow & solve deprecation in numpy (replace np.float with np.float64).
+Use Python 3.10 or newer and an isolated environment:
 
-[2022.04.10] Release xtcocotools v1.12. Fix bugs in APm and APl calculation.
-
-[2022.02.23] Release xtcocotools v1.11. Add Windows/Mac support.
-
-[2021.08.04] Release xtcocotools v1.10. Update installation dependencies.
-
-[2021.07.22] Release xtcocotools v1.9. Merge some useful PRs from cocoapi.
-
-[2021.05.19] Release xtcocotools v1.8. Fix CrowdPose evaluation.
-
-[2021.03.22] Release xtcocotools v1.7. Support multi-part scores for COCO-WholeBody Dataset.
-
-[2020.10.17] Release xtcocotools v1.6. Fix CrowdPose stats.
-
-[2020.9.14] Release xtcocotools v1.5. Support COCO-WholeBody Dataset.
-
-[2020.8.25] Release xtcocotools v1.0. Support COCO, AIChallenger, and CrowdPose Dataset.
-
-## Introduction
-
-COCO has become a standard annotation format for the task of person keypoint detection, and is widely used for multiple datasets.
-Our Extended COCO API is developed based on [@cocodataset/cocoapi](https://github.com/cocodataset/cocoapi). 
-
-We aim to provide a unified evaluation tools to support multiple human pose-related datasets, including [COCO](http://cocodataset.org/), [COCO-WholeBody](https://github.com/jin-s13/COCO-WholeBody), [CrowdPose](https://github.com/Jeff-sjtu/CrowdPose), [AI Challenger](https://github.com/AIChallenger/AI_Challenger_2017) and so on.
-
-xtcocotools has been used in [MMPose](https://github.com/open-mmlab/mmpose) framework.
-
-We provide a simple [demo_crowdpose](demos/demo_crowdpose.py) to evaluate on CrowdPose dataset; 
-[demo_coco](demos/demo_coco.py) to evaluate on COCO dataset;
-and [demo_coco_wholebody](demos/demo_coco_wholebody.py) to evaluate on COCO-WholeBody dataset;
-
-## Requirements
-
-- Python 3.7+ (Lower versions are not fully tested)
-
-## Installation
-
-To install from pip:
-```shell
-pip install xtcocotools
+```bash
+uv venv --python 3.13
+uv pip install --python .venv/bin/python -e . pytest
 ```
 
-To install from source:
-```shell
-pip install -r requirements.txt
-python setup.py install
+This checkout supplies the `xtcocotools` package, version `1.14.3+analyze.1`. Installing the upstream PyPI release alone does not provide the analysis module.
+
+## Python API
+
+```python
+from xtcocotools.coco import COCO
+from xtcocotools.cocoanalyze import COCOanalyze
+
+coco_gt = COCO("ground_truth.json")
+coco_dt = coco_gt.loadRes("predictions.json")
+analysis = COCOanalyze(coco_gt, coco_dt, use_area=False)
+analysis.params.maxDets = [20]
+analysis.analyze()
+analysis.summarize()
+print(analysis.stats)
 ```
+
+**Set `use_area=False` when using bbox-based normalization.** Both the OKS calculations and GT size groups then use `bbox[2] * bbox[3] * 0.53`, even if an `area` field is present. `use_area=True`, the default, requires the annotated GT area. Prediction areas follow `COCO.loadRes` and are not multiplied by 0.53.
+
+## Command line
+
+```bash
+.venv/bin/python -m xtcocotools.analyze \
+  ground_truth.json predictions.json results/my_baseline \
+  --no-use-area --plots
+```
+
+The runner writes `analysis.json` with parameters, summary statistics, error counts, and FP/FN IDs; `corrected_detections.json` contains per-detection diagnostics. `--plots` adds PR plots as PDFs. Use `--image-ids` to select a condition subset and `--no-score-errors` to omit score correction.
+
+A demo using the public COCO examples included in the repository:
+
+```bash
+.venv/bin/python -m xtcocotools.analyze \
+  annotations/example_coco_val.json annotations/example_coco_preds.json \
+  results/coco_demo --plots
+```
+
+See [the analysis guide](docs/analysis.md) for custom skeletons, area rules, correction semantics, and differences from the original implementation. The analysis API supports `keypoints` and `keypoints_crowd`; WholeBody and separate body-part analysis are not implemented. The native evaluator retains its existing support for those modes.
+
+## Tests and provenance
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+Tests compare the analysis baseline with native xtcocotools, cover missing-area inputs, and check a frozen reference generated from the original coco-analyze implementation. The reference includes its source commit and file hashes.
+
+The port retains the original MIT notice in [LICENSE.coco-analyze](LICENSE.coco-analyze). The xtcocotools license is in [LICENSE](LICENSE). [Upstream documentation](docs/upstream-readme.md) is preserved for reference.

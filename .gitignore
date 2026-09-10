@@ -15,3 +15,8 @@ xtcocotools/mask.pyc
 xtcocotools/__pycache__/
 dist/
 xtcocotools.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc

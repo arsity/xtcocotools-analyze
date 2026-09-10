@@ -2,3 +2,10 @@ include requirements.txt
 include common/maskApi.h
 include common/gason.cpp
 include common/gason.h
+
+include LICENSE.coco-analyze
+include xtcocotools/_mask.pyx
+include common/maskApi.c
+recursive-include docs *.md
+recursive-include tests *.py *.json
+include scripts/generate_legacy_reference.py
