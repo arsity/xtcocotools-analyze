@@ -33,7 +33,7 @@ The port follows xtcocotools at commit `17252e742ed4306a6323d74055f4c15c75cba6ad
 | GT area-range filtering | GT `area` | GT bbox width × height × 0.53 |
 | Unmatched detection area filtering | Detection `area` | Detection `area` |
 
-`use_area=False` ignores a supplied GT `area`; it is not merely a fallback for a missing field. With `use_area=True`, the analyzer reports a missing GT area as an error and tells the caller to choose the bbox policy explicitly. It does not invent segmentation areas.
+`use_area=False` ignores a supplied GT `area`; it is not merely a fallback for a missing field. With `use_area=True`, `evaluate()` and `analyze()` check GT areas after applying `params.imgIds` and `params.catIds`. A missing area outside the selected subset does not prevent analysis. A missing area inside it raises an error and tells the caller to choose the bbox policy explicitly. It does not invent segmentation areas.
 
 For predictions, `COCO.loadRes` derives area from the provided bbox when one is present; for keypoint-only results it uses the rectangle spanning the predicted keypoints. These areas remain unscaled. The legacy score-correction Soft-NMS uses the average of the two predicted keypoint-envelope areas for its prediction-to-prediction similarity. This separate heuristic does not use GT areas or the 0.53 factor.
 

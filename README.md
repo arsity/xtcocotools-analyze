@@ -13,7 +13,7 @@ uv venv --python 3.13
 uv pip install --python .venv/bin/python -e . pytest
 ```
 
-This checkout supplies the `xtcocotools` package, version `1.14.3+analyze.2`. Installing the upstream PyPI release alone does not provide the analysis module.
+This checkout supplies the `xtcocotools` package, version `1.14.3+analyze.3`. Installing the upstream PyPI release alone does not provide the analysis module.
 
 ## Python API
 

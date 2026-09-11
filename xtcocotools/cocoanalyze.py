@@ -66,9 +66,6 @@ class COCOanalyze:
         self._configure_skeleton(keypoint_names, inverse_indices)
         self.params.imgIds = sorted(cocoGt.getImgIds())
         self.params.catIds = sorted(cocoGt.getCatIds())
-        # get the max number of detections each team has per image
-        if use_area and any("area" not in g for g in self._gts):
-            raise ValueError("GT area is missing; pass use_area=False to use bbox area * 0.53")
         # result summarization
         self.stats = []
         self.baseline_summary = {}

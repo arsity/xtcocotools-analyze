@@ -154,10 +154,12 @@ def test_false_mode_ignores_existing_area():
     assert not np.allclose(true_a.cocoEval.eval["precision"], false_a.cocoEval.eval["precision"])
 
 
-def test_area_missing_is_explicit_error():
+@pytest.mark.parametrize("entrypoint", ["evaluate", "analyze"])
+def test_area_missing_is_explicit_error(entrypoint):
     gt, dt = fixture(area=False)
+    a = analyzer(gt, dt)
     with pytest.raises(ValueError, match="use_area=False"):
-        analyzer(gt, dt)
+        getattr(a, entrypoint)()
 
 
 def test_error_labels_and_correction_strength():
@@ -681,3 +683,74 @@ def test_crowd_cli_includes_native_baseline_groups(tmp_path):
     assert report["protocol"]["iou_type"] == "keypoints_crowd"
     np.testing.assert_array_equal(list(report["baseline_summary"].values()), expected)
     assert report["stats"]
+
+
+def area_subset_fixture(selection):
+    gt, dt = fixture(area=True)
+    # These annotated areas differ from bbox * 0.53: silently changing the
+    # policy would change the native reference, even on the valid subset.
+    gt.anns[1]["area"] = 10000.0
+    gt.anns[2]["area"] = 15000.0
+    del gt.anns[3]["area"]
+    if selection == "category":
+        gt.dataset["categories"].append({"id": 2, "name": "other"})
+        gt.anns[3].update(image_id=1, category_id=2)
+        gt.createIndex()
+    return gt, dt
+
+
+@pytest.mark.parametrize("selection", ["image", "category"])
+def test_area_validation_follows_selected_subset(selection):
+    gt, dt = area_subset_fixture(selection)
+    before = copy.deepcopy((gt.dataset, dt.dataset))
+    a = analyzer(gt, dt, use_area=True)
+    if selection == "image":
+        a.params.imgIds = [1]
+    else:
+        a.params.catIds = [1]
+    ev = native(gt, dt, True, imgIds=a.params.imgIds, catIds=a.params.catIds)
+    a.evaluate()
+    assert a.cocoEval.use_area is True
+    np.testing.assert_array_equal(a.cocoEval.eval["precision"], ev.eval["precision"])
+    np.testing.assert_array_equal(a.cocoEval.eval["recall"], ev.eval["recall"])
+    baseline = a.baseline_summary.copy()
+    summary(a)
+    assert a.baseline_summary == baseline
+    assert {g["id"] for g in a._gts} == {1, 2}
+    assert (gt.dataset, dt.dataset) == before
+    # Validation must still run when the selection changes to the missing area.
+    if selection == "image":
+        a.params.imgIds = [2]
+    else:
+        a.params.catIds = [2]
+    for entrypoint in (a.evaluate, a.analyze):
+        with pytest.raises(ValueError, match="use_area=False"):
+            entrypoint()
+
+
+@pytest.mark.parametrize("selection", ["image", "category"])
+def test_cli_area_validation_follows_selected_subset(tmp_path, selection):
+    import json
+
+    from xtcocotools.analyze import main
+
+    gt, dt = area_subset_fixture(selection)
+    gt_path, dt_path = tmp_path / "gt.json", tmp_path / "dt.json"
+    gt_path.write_text(json.dumps(gt.dataset))
+    dt_path.write_text(json.dumps(dt.dataset["annotations"]))
+    out = tmp_path / "output"
+    option = "--image-ids" if selection == "image" else "--category-id"
+    main([str(gt_path), str(dt_path), str(out), option, "1", "--sigmas", *map(str, SIGMAS)])
+    report = json.loads((out / "analysis.json").read_text())
+    assert report["protocol"]["use_area"] is True
+    assert report["protocol"]["gt_area_rule"] == "annotation area"
+    assert report["protocol"]["gt_annotations"] == 2
+    ev = native(
+        gt,
+        dt,
+        True,
+        imgIds=report["protocol"]["image_ids"],
+        catIds=report["protocol"]["category_ids"],
+    )
+    ev.summarize()
+    np.testing.assert_array_equal(list(report["baseline_summary"].values()), ev.stats)
